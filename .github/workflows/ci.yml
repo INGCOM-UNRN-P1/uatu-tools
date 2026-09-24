@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Sincronizar dependencias
+        run: uv sync
+
+      - name: Ejecutar suite de pruebas
+        run: uv run pytest -q
+
+      - name: Verificar instalación como uv tool
+        run: |
+          uv tool install .
+          uatu-audit --help
+          uatu-admin --help
