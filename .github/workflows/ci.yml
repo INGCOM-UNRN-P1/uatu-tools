@@ -4,9 +4,14 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -37,3 +42,41 @@ jobs:
           uv tool install .
           uatu-audit --help
           uatu-admin --help
+
+  interop:
+    # Audita con este checkout la telemetría que generan los módulos reales de
+    # la extensión (pruebas de interoperabilidad y del controlador de uatu).
+    # Detecta desde este lado cualquier ruptura del protocolo compartido.
+    name: Interoperabilidad con la extensión uatu
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: uatu-tools
+
+      - uses: actions/checkout@v4
+        with:
+          repository: INGCOM-UNRN-P1/uatu
+          path: uatu
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: uatu/extension/package-lock.json
+
+      - name: Instalar dependencias de la extensión
+        working-directory: uatu/extension
+        run: npm ci
+
+      - name: Ejecutar pruebas de la extensión contra este checkout
+        working-directory: uatu/extension
+        env:
+          UATU_TOOLS_DIR: ${{ github.workspace }}/uatu-tools
+        run: npm test
