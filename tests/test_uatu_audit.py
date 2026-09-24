@@ -6,10 +6,9 @@ import tempfile
 import unittest
 from datetime import timedelta
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import uatu_audit as ua  # noqa: E402
+from uatu_tools import audit as ua  # noqa: E402
 from telemetry_factory import (  # noqa: E402
     DEADLINE,
     START,
@@ -20,7 +19,7 @@ from telemetry_factory import (  # noqa: E402
     make_exam_repo,
 )
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uatu_audit.py")
+CLI = [sys.executable, "-m", "uatu_tools.audit"]
 
 
 def audit(repo, teacher, decrypt=True, **kwargs):
@@ -282,7 +281,7 @@ class CliTests(unittest.TestCase):
         out = tempfile.mkdtemp()
         md, js = os.path.join(out, "r.md"), os.path.join(out, "r.json")
         res = subprocess.run(
-            [sys.executable, SCRIPT, "--repo", repo, "--teacher-key", teacher.verify_hex,
+            [*CLI, "--repo", repo, "--teacher-key", teacher.verify_hex,
              "--decrypt-key", teacher.write_decrypt_pem(out), "--md-out", md, "--json-out", js],
             capture_output=True, text=True,
         )
@@ -293,13 +292,13 @@ class CliTests(unittest.TestCase):
         self.assertIn("Línea de Tiempo Consolidada", report)
         self.assertEqual(json.load(open(js))["status"], "warning")
 
-        res = subprocess.run([sys.executable, SCRIPT, "--repo", repo, "--teacher-key", "00" * 32, "--md-out", md],
+        res = subprocess.run([*CLI, "--repo", repo, "--teacher-key", "00" * 32, "--md-out", md],
                              capture_output=True, text=True)
         self.assertEqual(res.returncode, 1)
 
     def test_cli_requires_teacher_key(self):
         env = {k: v for k, v in os.environ.items() if k != "UATU_TEACHER_PUBLIC_KEY"}
-        res = subprocess.run([sys.executable, SCRIPT, "--repo", "."], capture_output=True, text=True, env=env)
+        res = subprocess.run([*CLI, "--repo", "."], capture_output=True, text=True, env=env)
         self.assertEqual(res.returncode, 1)
 
 

@@ -6,10 +6,10 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import uatu_admin  # noqa: E402
-import uatu_audit as ua  # noqa: E402
+from uatu_tools import admin as uatu_admin  # noqa: E402
+from uatu_tools import audit as ua  # noqa: E402
 from telemetry_factory import base_config  # noqa: E402
 
 

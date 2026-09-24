@@ -4,6 +4,8 @@ Herramientas de cátedra para Uatu v2.1.
 
 Gestiona el material criptográfico del lado docente (sección 3.3):
 
+Uso: uatu-admin <comando> [opciones]
+
   root-keygen      Genera la clave raíz institucional (ancla embebida en la extensión).
   keygen           Genera el par docente: Ed25519 (firma de .uatu.conf) y X25519 (descifrado).
   registry-add     Agrega o reemplaza un docente en el registro público de claves.
@@ -13,7 +15,7 @@ Gestiona el material criptográfico del lado docente (sección 3.3):
   verify-config    Verifica la firma docente de .uatu.conf.
 
 Todas las firmas se calculan sobre la serialización canónica compartida con la
-extensión y con uatu_audit.py.
+extensión y con el validador (uatu-audit).
 """
 
 from __future__ import annotations
@@ -29,8 +31,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from uatu_audit import canonical, verify_ed25519, without  # noqa: E402
+from uatu_tools.audit import canonical, verify_ed25519, without
 
 
 def _raw_public_hex(private_key) -> str:

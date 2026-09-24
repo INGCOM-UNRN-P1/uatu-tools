@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["cryptography>=42"]
+# ///
 """
 Validador de Integridad, Forense y Descifrado Uatu v2.1.
 
@@ -13,7 +17,9 @@ Códigos de salida POSIX:
   1  CRITICAL ERROR: falla de integridad o ausencia de registros.
   2  WARNING: cadena íntegra pero con alertas heurísticas.
 
-Única dependencia externa: `cryptography`.
+Única dependencia externa: `cryptography`. El módulo es autocontenido: se
+instala como `uatu-audit` (uv tool install) o se ejecuta suelto con
+`uv run audit.py`.
 """
 
 from __future__ import annotations

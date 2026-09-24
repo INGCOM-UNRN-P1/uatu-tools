@@ -21,8 +21,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-import uatu_audit as ua
-import uatu_admin
+from uatu_tools import admin as uatu_admin
+from uatu_tools import audit as ua
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "Estudiante",
