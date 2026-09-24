@@ -23,7 +23,7 @@ jobs:
         python-version: ["3.9", "3.11", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Instalar uv
         uses: astral-sh/setup-uv@v5
@@ -50,11 +50,11 @@ jobs:
     name: Interoperabilidad con la extensión uatu
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: uatu-tools
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: INGCOM-UNRN-P1/uatu
           path: uatu
@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: uatu/extension/package-lock.json
 
