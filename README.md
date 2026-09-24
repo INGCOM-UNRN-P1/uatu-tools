@@ -18,7 +18,8 @@ del repositorio de uatu.
 Requiere [uv](https://docs.astral.sh/uv/) y Python 3.9+.
 
 ```bash
-# Como herramienta global
+# Como herramienta global (repositorio privado: requiere credenciales de Git
+# con acceso a INGCOM-UNRN-P1, p. ej. `gh auth setup-git`)
 uv tool install "git+https://github.com/INGCOM-UNRN-P1/uatu-tools"
 
 # Desde un clon local
@@ -82,9 +83,12 @@ metadatos PEP 723: también puede copiarse a un repositorio y ejecutarse con
    manifiesto).
 
 En GitHub Actions, el workflow de ejemplo de uatu
-(`templates/exam-repo/.github/workflows/uatu-audit.yml`) instala esta
-herramienta con `uv tool install` a partir de la variable
-`UATU_TOOLS_SOURCE`.
+(`templates/exam-repo/.github/workflows/uatu-audit.yml`) clona este
+repositorio y lo instala con `uv tool install`. Como es privado, el
+`GITHUB_TOKEN` de otro repositorio no alcanza para leerlo: los workflows usan
+el secreto `UATU_READ_TOKEN`, un PAT fine-grained con **Contents: Read-only**
+sobre `uatu` y `uatu-tools`, idealmente como secreto de la organización. El
+job de interoperabilidad de este CI lo usa para clonar `uatu`.
 
 ## Desarrollo
 
