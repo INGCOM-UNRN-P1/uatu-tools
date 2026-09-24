@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Material criptográfico y reportes generados localmente
+*.pem
+secretos/
+summary.md
+uatu_report.md
+uatu_report.json

@@ -1,18 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
 [project]
 name = "uatu-tools"
 version = "2.1.0"
-description = "Validador forense y herramientas de cátedra de uatu (auditoría Git-native de exámenes)"
+description = "Validador forense y herramientas de cátedra de uatu (auditoría criptográfica Git-native de exámenes)"
 readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    {name = "Martín René Vilugrón", email = "martinvilu@gmail.com"}
+]
+maintainers = [
+    {name = "Programación I [B6003] - UNRN Andina"}
+]
 requires-python = ">=3.9"
-dependencies = ["cryptography>=42"]
+keywords = ["education", "proctoring", "forensics", "git", "ed25519", "unrn"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Topic :: Security :: Cryptography",
+]
+
+dependencies = [
+    "cryptography>=42",
+]
+
+[project.urls]
+Homepage = "https://github.com/INGCOM-UNRN-P1/uatu-tools"
+Repository = "https://github.com/INGCOM-UNRN-P1/uatu-tools.git"
+Issues = "https://github.com/INGCOM-UNRN-P1/uatu-tools/issues"
 
 [project.scripts]
 uatu-audit = "uatu_tools.audit:main"
 uatu-admin = "uatu_tools.admin:main"
 
-[build-system]
-requires = ["hatchling>=1.24"]
-build-backend = "hatchling.build"
+[dependency-groups]
+# PEP 735: uv lo instala con `uv sync` a secas.
+dev = [
+    "pytest>=7.4.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/uatu_tools"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
