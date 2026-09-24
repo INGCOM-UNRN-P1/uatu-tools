@@ -54,14 +54,10 @@ jobs:
         with:
           path: uatu-tools
 
-      # uatu es privado: el GITHUB_TOKEN de este repositorio no puede leerlo.
-      # UATU_READ_TOKEN (PAT fine-grained con Contents: read sobre uatu) lo
-      # habilita; si el repositorio fuera público alcanza con github.token.
       - uses: actions/checkout@v7
         with:
           repository: INGCOM-UNRN-P1/uatu
           path: uatu
-          token: ${{ secrets.UATU_READ_TOKEN || github.token }}
 
       - name: Instalar uv
         uses: astral-sh/setup-uv@v5
