@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -5,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from datetime import timedelta
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -267,6 +270,64 @@ class AuditorTests(unittest.TestCase):
         s.publish()
         a = audit(self.repo, self.teacher)
         self.assertTrue(any("no coincide con sha256_plaintext" in e for e in a.errors))
+
+
+class KeyStoreResolutionTests(unittest.TestCase):
+    """uatu-audit acepta claves del almacén de uatu-admin por identificador."""
+
+    def setUp(self):
+        from uatu_tools.keystore import KeyStore
+
+        self.teacher = TeacherKeys()
+        tmp = tempfile.mkdtemp()
+        pem_dir = os.path.join(tmp, "pem")
+        os.mkdir(pem_dir)
+        sign_pem = os.path.join(pem_dir, "s.pem")
+        with open(sign_pem, "wb") as f:
+            from cryptography.hazmat.primitives import serialization as ser
+
+            f.write(self.teacher.sign.private_bytes(ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))
+        self.keys_dir = os.path.join(tmp, "keys")
+        KeyStore(self.keys_dir).import_teacher("prof-lead-2026", sign_pem, self.teacher.write_decrypt_pem(pem_dir))
+        self.repo = make_exam_repo(self.teacher)
+        s = SessionFactory(self.repo)
+        s.start()
+        s.paste("q" * 70, START + timedelta(minutes=2), self.teacher)
+        s.event("session_end", {"reason": "deadline"}, START + timedelta(minutes=3))
+        s.publish()
+        self.out = os.path.join(tmp, "r.json")
+
+    def main(self, *extra):
+        env = {k: v for k, v in os.environ.items() if k != "UATU_TEACHER_PUBLIC_KEY"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = ua.main(["--repo", self.repo, "--keys-dir", self.keys_dir, "--md-out",
+                                self.out + ".md", "--json-out", self.out, *extra])
+        return code, json.load(open(self.out)) if os.path.exists(self.out) else None, err.getvalue()
+
+    def test_key_id_resolves_public_and_private_keys(self):
+        code, report, err = self.main("--key-id", "prof-lead-2026")
+        self.assertEqual(code, 2, report)
+        self.assertEqual(report["errors"], [])
+        self.assertIn("qqqq", report["warnings"][0])  # descifrado con la privada del almacén
+        self.assertIn("prof-lead-2026", err)
+
+    def test_manifest_teacher_key_id_is_used_by_default(self):
+        code, report, _ = self.main()
+        self.assertEqual(code, 2)
+        self.assertIn("qqqq", report["warnings"][0])
+
+    def test_ids_in_teacher_and_decrypt_flags(self):
+        code, report, _ = self.main("--teacher-key", "prof-lead-2026", "--decrypt-key", "prof-lead-2026")
+        self.assertEqual(code, 2)
+        self.assertIn("qqqq", report["warnings"][0])
+
+    def test_without_keys_requires_teacher_key(self):
+        empty = tempfile.mkdtemp()
+        env = {k: v for k, v in os.environ.items() if k != "UATU_TEACHER_PUBLIC_KEY"}
+        with mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ua.main(["--repo", self.repo, "--keys-dir", empty, "--md-out", self.out + ".md"]), 1)
 
 
 class CliTests(unittest.TestCase):

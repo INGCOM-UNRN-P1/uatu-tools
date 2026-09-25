@@ -677,15 +677,80 @@ class UatuAuditor:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
+# --------------------------------------------------------------------------- almacén de claves
+# Resolución mínima del almacén de uatu-admin (uatu_tools.keystore), duplicada a
+# propósito para que este módulo siga siendo autocontenido.
+
+KEYSTORE_INFO = "key.json"
+KEYSTORE_DECRYPTION_PEM = "decryption.x25519.pem"
+
+
+def default_keys_dir() -> str:
+    explicit = os.environ.get("UATU_KEYS_DIR")
+    if explicit:
+        return os.path.expanduser(explicit)
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "uatu", "keys")
+
+
+def read_stored_key(keys_dir: str, key_id: str) -> Dict[str, Any]:
+    with open(os.path.join(keys_dir, key_id, KEYSTORE_INFO), encoding="utf-8") as f:
+        info = json.load(f)
+    if info.get("kind") != "teacher":
+        raise ValueError(f"'{key_id}' no es una clave docente")
+    return info
+
+
+def manifest_teacher_key_id(repo: str) -> Optional[str]:
+    try:
+        with open(os.path.join(repo, ".uatu.conf"), encoding="utf-8") as f:
+            value = (json.load(f).get("crypto") or {}).get("teacher_key_id")
+        return str(value) if value else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def resolve_teacher_key(value: Optional[str], keys_dir: str) -> Optional[str]:
+    """Acepta la clave en hex o el identificador de una clave docente del almacén."""
+    if not value:
+        return value
+    value = value.strip()
+    if len(value) == 64 and all(c in "0123456789abcdefABCDEF" for c in value):
+        return value
+    try:
+        return str(read_stored_key(keys_dir, value)["ed25519_verify_key"])
+    except (OSError, ValueError, KeyError):
+        return value  # se reportará como firma inválida
+
+
+def resolve_decrypt_key(value: Optional[str], keys_dir: str) -> Optional[str]:
+    """Acepta una ruta PEM o el identificador de una clave docente del almacén."""
+    if not value or os.path.exists(value):
+        return value
+    candidate = os.path.join(keys_dir, value, KEYSTORE_DECRYPTION_PEM)
+    return candidate if os.path.exists(candidate) else value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=f"Validador Forense Uatu v{VERSION}")
     parser.add_argument("--repo", default=".", help="Ruta del repositorio de la entrega")
     parser.add_argument(
         "--teacher-key",
         default=os.environ.get("UATU_TEACHER_PUBLIC_KEY"),
-        help="Clave pública Ed25519 docente (hex). Por omisión $UATU_TEACHER_PUBLIC_KEY",
+        help="Clave pública Ed25519 docente (hex) o identificador del almacén. Por omisión $UATU_TEACHER_PUBLIC_KEY",
     )
-    parser.add_argument("--decrypt-key", default=None, help="Clave privada docente X25519 (PEM) para descifrado")
+    parser.add_argument(
+        "--decrypt-key",
+        default=None,
+        help="Clave privada docente X25519 (ruta PEM) o identificador del almacén, para descifrar la evidencia",
+    )
+    parser.add_argument(
+        "--key-id",
+        default=None,
+        help="Clave docente del almacén de uatu-admin: usa su pública para verificar y su privada para descifrar. "
+             "Sin --teacher-key ni --key-id se intenta con el crypto.teacher_key_id del manifiesto",
+    )
+    parser.add_argument("--keys-dir", default=None, help="Almacén de claves (por omisión $UATU_KEYS_DIR o ~/.config/uatu/keys)")
     parser.add_argument("--md-out", default="summary.md", help="Reporte Markdown de salida")
     parser.add_argument("--json-out", default=None, help="Reporte JSON opcional para integraciones")
     parser.add_argument("--user", default=None, help="Auditar solo las sesiones de este usuario de GitHub")
@@ -698,8 +763,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    keys_dir = args.keys_dir or default_keys_dir()
+
+    key_id = args.key_id
+    if not key_id and not args.teacher_key:
+        key_id = manifest_teacher_key_id(args.repo)
+        if key_id and not os.path.exists(os.path.join(keys_dir, key_id, KEYSTORE_INFO)):
+            key_id = None
+    if key_id:
+        try:
+            info = read_stored_key(keys_dir, key_id)
+        except (OSError, ValueError) as e:
+            print(f"No se pudo leer la clave '{key_id}' del almacén {keys_dir}: {e}", file=sys.stderr)
+            return 1
+        args.teacher_key = args.teacher_key or info.get("ed25519_verify_key")
+        args.decrypt_key = args.decrypt_key or os.path.join(keys_dir, key_id, KEYSTORE_DECRYPTION_PEM)
+        print(f"Usando la clave docente '{key_id}' del almacén {keys_dir}.", file=sys.stderr)
+
+    args.teacher_key = resolve_teacher_key(args.teacher_key, keys_dir)
+    args.decrypt_key = resolve_decrypt_key(args.decrypt_key, keys_dir)
     if not args.teacher_key:
-        print("Se requiere --teacher-key o la variable UATU_TEACHER_PUBLIC_KEY.", file=sys.stderr)
+        print("Se requiere --teacher-key, --key-id o la variable UATU_TEACHER_PUBLIC_KEY.", file=sys.stderr)
         return 1
 
     auditor = UatuAuditor(
