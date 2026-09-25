@@ -16,6 +16,7 @@ Uso: uatu-admin [--keys-dir DIR] <comando> [opciones]
   verify-registry   Verifica la firma raíz del registro.
   sign-config       Firma .uatu.conf con la clave Ed25519 docente.
   verify-config     Verifica la firma docente de .uatu.conf.
+  protect-branches  Protege las ramas de telemetría contra borrado y force-push.
 
 Las claves se guardan por omisión en ~/.config/uatu/keys/<id>/ (ver
 uatu_tools.keystore). Todas las firmas se calculan sobre la serialización
@@ -32,7 +33,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from uatu_tools.audit import canonical, verify_ed25519, without
-from uatu_tools.github import GitHubError, set_actions_value
+from uatu_tools.github import (
+    RULESET_NAME,
+    GitHubClient,
+    GitHubError,
+    apply_ruleset,
+    build_ruleset,
+    resolve_token,
+    set_actions_value,
+)
 from uatu_tools.keystore import KeyStore, KeyStoreError, StoredKey, load_private
 
 AUDIT_PUBLIC_SECRET = "UATU_TEACHER_PUBLIC_KEY"
@@ -355,6 +364,31 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+# --------------------------------------------------------------------------- GitHub
+
+
+def cmd_protect_branches(args: argparse.Namespace) -> int:
+    prefix = args.prefix
+    if not prefix and args.config and os.path.exists(args.config):
+        prefix = (_load_json(args.config).get("git") or {}).get("telemetry_branch_prefix")
+    prefix = prefix or "uatu-audit"
+    if bool(args.repo) == bool(args.org):
+        raise AdminError("Indique --repo OWNER/REPO o --org ORG.")
+    if args.org and not args.repo_pattern:
+        raise AdminError("Con --org indique al menos un --repo-pattern (p. ej. 'examen-*' o '~ALL').")
+    ruleset = build_ruleset(prefix, args.name, args.repo_pattern if args.org else None)
+    scope = f"repos/{args.repo}" if args.repo else f"orgs/{args.org}"
+    if args.dry_run:
+        print(json.dumps({"endpoint": f"/{scope}/rulesets", "ruleset": ruleset}, ensure_ascii=False, indent=2))
+        return 0
+    client = GitHubClient(resolve_token())
+    action, result = apply_ruleset(client, scope, ruleset)
+    target = args.repo or f"la organización {args.org}"
+    print(f"Ruleset '{args.name}' {action} en {target} (id {result.get('id') if isinstance(result, dict) else '?'}): "
+          f"refs/heads/{prefix}/** no puede borrarse ni reescribirse con force-push.")
+    return 0
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -462,6 +496,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--key-id", help="Clave docente del almacén (por omisión el teacher_key_id del manifiesto)")
     p.set_defaults(func=cmd_verify_config)
 
+    p = sub.add_parser("protect-branches", help="Impide borrar o reescribir las ramas de telemetría (ruleset de GitHub)")
+    scope = p.add_mutually_exclusive_group()
+    scope.add_argument("--repo", help="Repositorio del examen OWNER/REPO")
+    scope.add_argument("--org", help="Organización (ruleset para todos los repositorios que coincidan)")
+    p.add_argument("--repo-pattern", action="append", metavar="PATRÓN",
+                   help="Con --org: patrón de nombres de repositorio (repetible; '~ALL' para todos)")
+    p.add_argument("--prefix", help="Prefijo de las ramas (por omisión el de --config o 'uatu-audit')")
+    p.add_argument("--config", default=".uatu.conf", help="Manifiesto del que leer git.telemetry_branch_prefix")
+    p.add_argument("--name", default=RULESET_NAME, help="Nombre del ruleset (se actualiza si ya existe)")
+    p.add_argument("--dry-run", action="store_true", help="Mostrar el ruleset sin aplicarlo")
+    p.set_defaults(func=cmd_protect_branches)
     return parser
 
 
