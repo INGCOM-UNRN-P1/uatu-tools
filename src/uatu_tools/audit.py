@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import shutil
 import json
 import os
 import subprocess
@@ -731,8 +732,51 @@ def resolve_decrypt_key(value: Optional[str], keys_dir: str) -> Optional[str]:
     return candidate if os.path.exists(candidate) else value
 
 
+def _chequeos_doctor() -> list:
+    """Requisitos de uatu-audit: (nombre, requerido, ok, detalle)."""
+    chequeos = []
+    chequeos.append(("python", True, sys.version_info >= (3, 9), sys.version.split()[0]))
+    try:
+        import cryptography
+
+        chequeos.append(("cryptography", True, True, cryptography.__version__))
+    except ImportError:
+        chequeos.append(("cryptography", True, False, "no instalada: uv tool install git+https://github.com/INGCOM-UNRN-P1/uatu-tools"))
+    git = shutil.which("git")
+    chequeos.append(("git", True, bool(git), git or "no está en el PATH (sudo apt install git / sudo dnf install git)"))
+    almacen = default_keys_dir()
+    chequeos.append(("almacén de claves", False, os.path.isdir(almacen), almacen))
+    return chequeos
+
+
+def doctor(como_json: bool = False) -> int:
+    """`uatu-audit doctor [--json]`: verifica los requisitos del validador."""
+    chequeos = _chequeos_doctor()
+    ok = all(estado for _, requerido, estado, _ in chequeos if requerido)
+    if como_json:
+        print(json.dumps({
+            "schema_version": "1.0.0",
+            "herramienta": "uatu-audit",
+            "version": VERSION,
+            "ok": ok,
+            "chequeos": [
+                {"nombre": n, "requerido": r, "ok": e, "detalle": d} for n, r, e, d in chequeos
+            ],
+        }, ensure_ascii=False, indent=2))
+    else:
+        for nombre, requerido, estado, detalle in chequeos:
+            marca = "✓" if estado else ("✗" if requerido else "⚠")
+            print(f"{marca} {nombre}: {detalle}")
+        print("Todo listo." if ok else "Falta al menos un requisito obligatorio.")
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=f"Validador Forense Uatu v{VERSION}")
+    parser = argparse.ArgumentParser(
+        description=f"Validador Forense Uatu v{VERSION}",
+        epilog="`uatu-audit doctor [--json]` verifica los requisitos (Python, cryptography, git).",
+    )
+    parser.add_argument("-v", "--version", action="version", version=f"uatu-audit {VERSION}")
     parser.add_argument("--repo", default=".", help="Ruta del repositorio de la entrega")
     parser.add_argument(
         "--teacher-key",
@@ -762,7 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    argumentos = list(argv) if argv is not None else sys.argv[1:]
+    if argumentos[:1] == ["doctor"]:
+        return doctor(como_json="--json" in argumentos[1:])
+    args = build_parser().parse_args(argumentos)
     keys_dir = args.keys_dir or default_keys_dir()
 
     key_id = args.key_id

@@ -400,11 +400,53 @@ def _add_gh_target(p: argparse.ArgumentParser) -> None:
                    help="Visibilidad de un secreto de organización (por omisión la de gh)")
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Verifica los requisitos de uatu-admin (y la salida en JSON con --json)."""
+    import shutil
+
+    from uatu_tools import __version__
+
+    chequeos = [("python", True, sys.version_info >= (3, 9), sys.version.split()[0])]
+    try:
+        import cryptography
+
+        chequeos.append(("cryptography", True, True, cryptography.__version__))
+    except ImportError:
+        chequeos.append(("cryptography", True, False, "no instalada"))
+    for binario, requerido, uso in (("git", True, "operaciones sobre repositorios"),
+                                    ("gh", False, "secretos de Actions y protección de ramas")):
+        ruta = shutil.which(binario)
+        chequeos.append((binario, requerido, bool(ruta), ruta or f"no está en el PATH ({uso})"))
+    almacen = args.keys_dir or os.environ.get("UATU_KEYS_DIR") or os.path.expanduser("~/.config/uatu/keys")
+    chequeos.append(("almacén de claves", False, os.path.isdir(almacen), almacen))
+    ok = all(estado for _, requerido, estado, _ in chequeos if requerido)
+    if args.json:
+        print(json.dumps({
+            "schema_version": "1.0.0",
+            "herramienta": "uatu-admin",
+            "version": __version__,
+            "ok": ok,
+            "chequeos": [{"nombre": n, "requerido": r, "ok": e, "detalle": d} for n, r, e, d in chequeos],
+        }, ensure_ascii=False, indent=2))
+    else:
+        for nombre, requerido, estado, detalle in chequeos:
+            marca = "✓" if estado else ("✗" if requerido else "⚠")
+            print(f"{marca} {nombre}: {detalle}")
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
+    from uatu_tools import __version__
+
     parser = argparse.ArgumentParser(prog="uatu-admin", description="Herramientas de cátedra para Uatu v2.1")
+    parser.add_argument("-v", "--version", action="version", version=f"uatu-admin {__version__}")
     parser.add_argument("--keys-dir", default=None,
                         help="Almacén de claves (por omisión $UATU_KEYS_DIR o ~/.config/uatu/keys)")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("doctor", help="Verifica los requisitos (Python, cryptography, git, gh)")
+    p.add_argument("--json", action="store_true", help="Salida estructurada en JSON")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("root-keygen", help="Genera la clave raíz institucional en el almacén")
     p.add_argument("--key-id", required=True)
