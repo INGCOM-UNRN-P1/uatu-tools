@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uatu-tools"
-version = "2.1.0"
+version = "2.2.0"
 description = "Validador forense y herramientas de cátedra de uatu (auditoría criptográfica Git-native de exámenes)"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
