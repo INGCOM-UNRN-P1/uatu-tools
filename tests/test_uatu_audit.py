@@ -248,6 +248,24 @@ class AuditorTests(unittest.TestCase):
         self.assertTrue(any("github.copilot" in w for w in a.warnings))
         self.assertTrue(any("alterado o eliminado durante la sesión" in e for e in a.errors))
 
+    def test_disallowed_setting(self):
+        """Reglas de configuración del editor (portadas de grid, N-GRID-01): la violación es un aviso."""
+        s = SessionFactory(self.repo)
+        s.start()
+        s.event("disallowed_setting", {"key": "github.copilot.enable", "value_json": "true", "state": "violated",
+                                       "note": "Sin IA"}, START + timedelta(minutes=2))
+        s.event("disallowed_setting", {"key": "github.copilot.enable", "value_json": "false", "state": "resolved",
+                                       "note": "Sin IA"}, START + timedelta(minutes=3))
+        s.event("session_end", {"reason": "deadline"}, START + timedelta(minutes=4))
+        s.publish()
+        a = audit(self.repo, self.teacher)
+        avisos = [w for w in a.warnings if "github.copilot.enable" in w]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("Sin IA", avisos[0])
+        sesion = next(iter(a.sessions.values()))
+        self.assertEqual(sesion.disallowed_settings, ["github.copilot.enable = true (violated)",
+                                                      "github.copilot.enable = false (resolved)"])
+
     def test_code_commit_outside_telemetry(self):
         clean_session(self.repo, minutes=(1, 3, 5)).publish()
         with open(os.path.join(self.repo, "main.c"), "a") as f:

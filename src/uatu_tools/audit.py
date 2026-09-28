@@ -123,6 +123,7 @@ class SessionReport:
     external_insertions: int = 0
     unfocused_ms: int = 0
     disallowed: List[str] = field(default_factory=list)
+    disallowed_settings: List[str] = field(default_factory=list)
     flagged: List[str] = field(default_factory=list)
 
 
@@ -454,6 +455,13 @@ class UatuAuditor:
                 report.disallowed.append(ext)
                 if data.get("state") != "removed":
                     warn(f"Extensión no autorizada detectada en seq {seq}: {ext}.")
+            elif etype == "disallowed_setting":
+                # Reglas de configuración del editor (monitoring.setting_rules, portadas de grid).
+                ajuste = f"{data.get('key')} = {data.get('value_json')} ({data.get('state')})"
+                report.disallowed_settings.append(ajuste)
+                if data.get("state") == "violated":
+                    nota = f" [{data.get('note')}]" if data.get("note") else ""
+                    warn(f"Configuración no permitida en seq {seq}: {data.get('key')} = {data.get('value_json')}{nota}.")
             elif etype == "clock_skew":
                 warn(f"Desfase de reloj registrado en seq {seq}: {data.get('offset_ms')} ms.")
             elif etype == "config_changed":
@@ -643,6 +651,8 @@ class UatuAuditor:
             return "recupera foco" if data.get("focused") else "pierde foco"
         if etype == "disallowed_extension":
             return f"{data.get('extension_id')} ({data.get('state')})"
+        if etype == "disallowed_setting":
+            return f"{data.get('key')} = {data.get('value_json')} ({data.get('state')})"
         if etype == "session_end":
             return str(data.get("reason", ""))
         if etype == "heartbeat":
@@ -669,6 +679,7 @@ class UatuAuditor:
                     "external_insertions": s.external_insertions,
                     "unfocused_ms": s.unfocused_ms,
                     "disallowed_extensions": s.disallowed,
+                    "disallowed_settings": s.disallowed_settings,
                     "closed_reason": s.closed_reason,
                 }
                 for s in self.sessions.values()
