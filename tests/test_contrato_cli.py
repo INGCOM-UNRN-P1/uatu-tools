@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -27,18 +28,20 @@ def test_ayuda_corta(capsys, modulo):
     assert ayuda.startswith("uso: ") and "muestra esta ayuda y sale" in ayuda  # en español (N-ECO-14)
 
 
-@pytest.mark.parametrize("modulo, argumentos, mensaje", [
-    (admin, ["nada"], "'nada' no es ninguna de estas opciones: doctor, "),
-    (admin, ["keygen"], "faltan los argumentos obligatorios: --key-id"),
-    (audit, ["--max-paste-chars", "x"], "argumento --max-paste-chars: valor inválido (int): 'x'"),
-    (audit, ["--repo"], "argumento --repo: necesita un valor"),
+# Patrones y no textos fijos: según la versión de Python, argparse cita las opciones o no
+# ('doctor' o doctor) y, en 3.9, el prefijo «argument --x:» no pasa por gettext y queda en inglés.
+@pytest.mark.parametrize("modulo, argumentos, patron", [
+    (admin, ["nada"], r"'nada' no es ninguna de estas opciones: '?doctor'?, "),
+    (admin, ["keygen"], r"faltan los argumentos obligatorios: --key-id"),
+    (audit, ["--max-paste-chars", "x"], r"--max-paste-chars: valor inválido \(int\): 'x'"),
+    (audit, ["--repo"], r"--repo: necesita un valor"),
 ])
-def test_errores_de_uso_en_espanol(capsys, modulo, argumentos, mensaje):
+def test_errores_de_uso_en_espanol(capsys, modulo, argumentos, patron):
     with pytest.raises(SystemExit) as salida:
         modulo.main(argumentos)
     assert salida.value.code == 2
     error = capsys.readouterr().err
-    assert "uso: " in error and mensaje in error
+    assert "uso: " in error and re.search(patron, error), error
 
 
 @pytest.mark.parametrize("modulo, nombre", [(audit, "uatu-audit"), (admin, "uatu-admin")])
