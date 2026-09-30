@@ -32,7 +32,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from uatu_tools.audit import canonical, verify_ed25519, without
+from uatu_tools.audit import canonical, traducir_argparse, verify_ed25519, without
 from uatu_tools.github import (
     RULESET_NAME,
     GitHubClient,
@@ -438,6 +438,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     from uatu_tools import __version__
 
+    traducir_argparse()  # ayuda y errores de argparse en español (N-ECO-14)
     parser = argparse.ArgumentParser(prog="uatu-admin", description="Herramientas de cátedra para Uatu v2.1")
     parser.add_argument("-v", "--version", action="version", version=f"uatu-admin {__version__}")
     parser.add_argument("--keys-dir", default=None,

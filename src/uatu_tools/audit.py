@@ -782,7 +782,62 @@ def doctor(como_json: bool = False) -> int:
     return 0 if ok else 1
 
 
+# Textos de argparse en español (LINEAMIENTOS §4.2, N-ECO-14). uatu-tools no usa Typer, así que
+# no toma los de yutani; y este módulo es autocontenido, así que la tabla vive acá (uatu-admin la
+# importa). argparse busca cada texto con `_()`/`ngettext()` al usarlo: traducir_argparse()
+# reemplaza esas funciones por la tabla. Un texto que no está (de otra versión de Python) queda en
+# inglés en lugar de fallar. Misma redacción que los textos de Typer/Click que traduce yutani.
+TEXTOS_ARGPARSE = {
+    "usage: ": "uso: ",
+    "positional arguments": "argumentos",
+    "options": "opciones",
+    "optional arguments": "opciones",  # Python 3.9
+    "subcommands": "subcomandos",
+    "show this help message and exit": "muestra esta ayuda y sale",
+    "show program's version number and exit": "muestra la versión y sale",
+    " (default: %(default)s)": " (por defecto: %(default)s)",
+    "argument %(argument_name)s: %(message)s": "argumento %(argument_name)s: %(message)s",
+    "the following arguments are required: %s": "faltan los argumentos obligatorios: %s",
+    "one of the arguments %s is required": "falta uno de estos argumentos: %s",
+    "unrecognized arguments: %s": "argumentos no reconocidos: %s",
+    "not allowed with argument %s": "no se puede usar junto con %s",
+    "ambiguous option: %(option)s could match %(matches)s": "opción ambigua: %(option)s puede ser %(matches)s",
+    "expected one argument": "necesita un valor",
+    "expected at most one argument": "admite como máximo un valor",
+    "expected at least one argument": "necesita al menos un valor",
+    "ignored explicit argument %r": "no lleva valor: %r",
+    "invalid %(type)s value: %(value)r": "valor inválido (%(type)s): %(value)r",
+    "invalid choice: %(value)r (choose from %(choices)s)": "%(value)r no es ninguna de estas opciones: %(choices)s",
+    "can't open '%(filename)s': %(error)s": "no se puede abrir '%(filename)s': %(error)s",
+    "argument '%(argument_name)s' is deprecated": "el argumento '%(argument_name)s' está obsoleto",
+    "option '%(option)s' is deprecated": "la opción '%(option)s' está obsoleta",
+    "command '%(parser_name)s' is deprecated": "el comando '%(parser_name)s' está obsoleto",
+    "%(prog)s: warning: %(message)s\n": "%(prog)s: aviso: %(message)s\n",
+}
+PLURALES_ARGPARSE = {
+    ("expected %s argument", "expected %s arguments"): ("necesita %s valor", "necesita %s valores"),
+}
+
+
+def _texto_argparse(mensaje: str) -> str:
+    return TEXTOS_ARGPARSE.get(mensaje, mensaje)
+
+
+def _plural_argparse(singular: str, plural: str, n: int) -> str:
+    singular, plural = PLURALES_ARGPARSE.get((singular, plural), (singular, plural))
+    return singular if n == 1 else plural
+
+
+def traducir_argparse() -> None:
+    """Pasa al español la ayuda y los errores de argparse (idempotente)."""
+    if hasattr(argparse, "_"):
+        argparse._ = _texto_argparse
+    if hasattr(argparse, "ngettext"):
+        argparse.ngettext = _plural_argparse
+
+
 def build_parser() -> argparse.ArgumentParser:
+    traducir_argparse()
     parser = argparse.ArgumentParser(
         description=f"Validador Forense Uatu v{VERSION}",
         epilog="`uatu-audit doctor [--json]` verifica los requisitos (Python, cryptography, git).",
