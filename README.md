@@ -111,3 +111,21 @@ permite fijar una versión.
 uv sync
 uv run pytest -q
 ```
+
+<!-- p1:referencia:inicio — generado por p1-tools/scripts/readme_generado.py: no editar a mano -->
+
+## Referencia rápida
+
+### Requisitos
+
+- Python ≥ 3.11 y [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- Programas del sistema: `git`.
+
+| Sistema | `git` |
+|:--|:--|
+| Debian / Ubuntu | `sudo apt install git` |
+| Fedora | `sudo dnf install git` |
+| Windows | incluido en el entorno de la cátedra (MSYS2 UCRT64) |
+| macOS | `xcode-select --install` |
+
+<!-- p1:referencia:fin -->
