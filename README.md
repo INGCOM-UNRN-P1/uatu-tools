@@ -112,6 +112,13 @@ uv sync
 uv run pytest -q
 ```
 
+## Limitaciones
+
+- Trabaja sobre lo que ya registró uatu: `uatu-audit` audita las ramas `uatu-audit/<usuario>/<sesión>`
+  de una entrega; la vigilancia durante el examen la hace uatu en VS Code, no estas herramientas.
+- Sin la clave docente, `uatu-audit` verifica firmas, cadena de hashes y tiempos, pero no puede
+  descifrar los pegados.
+
 <!-- p1:referencia:inicio — generado por p1-tools/scripts/readme_generado.py: no editar a mano -->
 
 ## Referencia rápida
@@ -167,5 +174,17 @@ uv run pytest -q
 | `uatu-admin protect-branches` | Impide borrar o reescribir las ramas de telemetría (ruleset de GitHub) |
 
 Ayuda de cada comando: `uatu-admin <comando> -h`.
+
+### Salida JSON de `uatu-admin`
+
+Con `--json`, estos comandos emiten el resultado como JSON por la salida estándar, para usarlo desde scripts, ripley o dredd: `uatu-admin doctor`. El de `doctor --json` lleva `schema_version` y `ok`.
+
+### Códigos de salida
+
+| Código | Significado |
+|:--|:--|
+| `0` | Terminó bien (en `doctor`: está todo lo requerido). |
+| `1` | El comando encontró problemas (hallazgos, pruebas que fallan, un umbral que no se alcanza) o un dato no se pudo usar (un archivo ilegible, un formato inválido). |
+| `2` | Error de uso: comando, opción o argumento inválido. |
 
 <!-- p1:referencia:fin -->
