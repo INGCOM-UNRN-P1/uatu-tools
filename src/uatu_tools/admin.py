@@ -135,7 +135,7 @@ def cmd_keys_list(args: argparse.Namespace) -> int:
         public = k.info.get("ed25519_public_key") if k.kind == "root" else k.info.get("ed25519_verify_key")
         kind = "raíz   " if k.kind == "root" else "docente"
         name = f"  {k.info['name']}" if k.info.get("name") else ""
-        print(f"  {k.key_id:<24} {kind}  {public[:16]}…  {k.info.get('created_at_utc', '')}{name}")
+        print(f"  {k.key_id:<24} {kind}  {(public or '')[:16]}…  {k.info.get('created_at_utc', '')}{name}")
     return 0
 
 
@@ -340,7 +340,11 @@ def cmd_sign_config(args: argparse.Namespace) -> int:
     key_id = args.key_id or (config.get("crypto") or {}).get("teacher_key_id")
     if not args.key and not key_id:
         raise AdminError("Indique --key-id (clave del almacén) o --key PEM.")
-    key_path = args.key or _store(args).get(key_id).signing_key_path
+    if args.key:
+        key_path = args.key
+    else:
+        assert key_id is not None  # validado arriba
+        key_path = _store(args).get(key_id).signing_key_path
     try:
         signed = sign_config(config, load_private(key_path), key_id)
     except ValueError as e:
