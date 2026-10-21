@@ -86,7 +86,17 @@ uatu-admin keys export prof-lead-2026 -f decryption-key --out docente.pem
    uatu-admin protect-branches --org ORG --repo-pattern 'examen-parcial-1-*'
    ```
 
-5. **Auditoría de una entrega** (con la clave en el almacén, `uatu-audit` la
+5. **Consigna sellada** (opcional): no está en ninguna máquina de estudiante
+   antes de `start_utc`. Se sella antes del examen y se libera a la hora del
+   servidor de GitHub; la clave nunca va a los repositorios:
+
+   ```bash
+   uatu-admin consigna sellar parcial1/ --config .uatu.conf --key-id prof-lead-2026
+   # el día del examen (con --esperar se puede lanzar antes: espera start_utc)
+   uatu-admin consigna liberar --org ORG --prefijo examen-parcial-1- --esperar
+   ```
+
+6. **Auditoría de una entrega** (con la clave en el almacén, `uatu-audit` la
    toma del `teacher_key_id` del manifiesto):
 
    ```bash
@@ -172,6 +182,9 @@ uv run pytest -q
 | `uatu-admin sign-config` | Firma .uatu.conf |
 | `uatu-admin verify-config` | Verifica la firma de .uatu.conf |
 | `uatu-admin protect-branches` | Impide borrar o reescribir las ramas de telemetría (ruleset de GitHub) |
+| `uatu-admin consigna sellar` | Cifra la consigna y agrega su hash al `.uatu.conf` |
+| `uatu-admin consigna liberar` | Desde `start_utc` (hora de GitHub) la descifra en memoria y la publica en cada repositorio |
+| `uatu-admin consigna hash` | Hash de una carpeta y si coincide con el `consigna.sha256` del manifiesto |
 
 Ayuda de cada comando: `uatu-admin <comando> -h`.
 

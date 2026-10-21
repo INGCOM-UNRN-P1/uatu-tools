@@ -256,6 +256,24 @@ uatu-admin protect-branches --org ORG --repo-pattern 'examen-parcial-1-*'
 
 Requiere permisos de administración sobre el repositorio u organización.
 
+### 3.15 `consigna`
+
+Consigna con bloqueo de tiempo (Decisión 1, ex keymaker; diseño en
+`uatu/docs/propuesta_liberacion_consignas.md`). Ningún secreto llega a los
+repositorios de los estudiantes: un workflow ahí podría editarse para
+imprimirlo antes de hora.
+
+| Comando | Qué hace |
+|---|---|
+| `consigna sellar CARPETA [--config] [--salida consigna.enc] [--clave-salida] [--carpeta-destino consigna] [--key-id]` | Cifra la carpeta (AES-256-GCM), escribe el paquete y la clave (0600) y agrega `consigna: {carpeta, sha256}` al manifiesto; con `--key-id` lo vuelve a firmar. |
+| `consigna liberar (--repo R … \| --org ORG --prefijo P) [--paquete] [--clave] [--rama] [--esperar]` | Con la hora del servidor de GitHub: antes de `start_utc` sale con **3** sin descifrar (con `--esperar`, espera). Después descifra en memoria y publica `CARPETA/` en cada repositorio con un commit `uatu: liberar consigna (…)` de fecha del servidor. Idempotente: los ya liberados se saltean; sale con 1 si alguno falló. |
+| `consigna hash CARPETA [--config]` | El hash de la carpeta (el de `consigna.sha256`) y, con `--config`, si coincide. |
+
+El hash es SHA-256 de las líneas `<ruta con />\n<sha256 del archivo>\n`,
+ordenadas por ruta; la extensión y `uatu-audit` lo calculan igual. `uatu-audit`
+verifica que el commit de liberación sea posterior a `start_utc`, que el
+contenido sea el sellado y que la consigna no haya entrado por otro commit.
+
 ---
 
 (manual-uatu-tools-audit)=
