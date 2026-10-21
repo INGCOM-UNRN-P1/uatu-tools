@@ -462,6 +462,10 @@ class UatuAuditor:
                 if data.get("state") == "violated":
                     nota = f" [{data.get('note')}]" if data.get("note") else ""
                     warn(f"Configuración no permitida en seq {seq}: {data.get('key')} = {data.get('value_json')}{nota}.")
+            elif etype == "consigna_verificada":
+                if data.get("coincide") is False:
+                    warn(f"La consigna que tenía el estudiante en seq {seq} no coincide con la sellada "
+                         f"(sha256 {str(data.get('sha256_obtenido'))[:12]}…).")
             elif etype == "clock_skew":
                 warn(f"Desfase de reloj registrado en seq {seq}: {data.get('offset_ms')} ms.")
             elif etype == "config_changed":
@@ -546,6 +550,66 @@ class UatuAuditor:
                     f"Commit de código {sha[:10]} ({iso}, '{subject}') fuera de todo período con telemetría activa."
                 )
 
+    def check_consigna(self) -> None:
+        """La consigna sellada (bloque `consigna` del manifiesto firmado): se liberó con el commit
+        `uatu: liberar consigna` después de start_utc, con el contenido declarado, y no apareció
+        antes (ver uatu_tools.consigna)."""
+        bloque = self.config.get("consigna") if isinstance(self.config.get("consigna"), dict) else None
+        if not bloque or not bloque.get("sha256"):
+            return
+        carpeta = str(bloque.get("carpeta") or "consigna").strip("/")
+        start_dt, _ = self._window()
+        try:
+            log = self._git(["log", "--reverse", "--format=%H%x09%cI%x09%s", self.code_ref, "--", carpeta])
+        except subprocess.CalledProcessError:
+            return
+        commits = [linea.split("\t", 2) for linea in log.splitlines() if linea.count("\t") >= 2]
+        liberacion = next((c for c in commits if c[2].startswith("uatu: liberar consigna")), None)
+        if liberacion is None:
+            if commits:
+                self.errors.append(f"La consigna ({carpeta}/) entró en el commit {commits[0][0][:10]} y no por la "
+                                   "liberación de uatu-admin: pudo estar disponible antes de hora.")
+            else:
+                self.warnings.append(f"La consigna sellada ({carpeta}/) no se liberó en este repositorio.")
+            return
+        sha, fecha, _ = liberacion
+        anteriores = commits[:commits.index(liberacion)]
+        if anteriores:
+            self.errors.append(f"{carpeta}/ ya existía antes de la liberación (commit {anteriores[0][0][:10]}).")
+        try:
+            liberada = parse_utc(fecha)
+        except ValueError:
+            liberada = None
+        if start_dt and liberada and liberada < start_dt:
+            self.errors.append(f"La consigna se liberó antes de start_utc ({fecha} < {self._session_cfg.get('start_utc')}).")
+        try:
+            digest = self._hash_carpeta(sha, carpeta)
+        except subprocess.CalledProcessError as e:
+            self.errors.append(f"No se pudo leer la consigna liberada ({sha[:10]}): {e.stderr.strip()}")
+            return
+        if digest != bloque["sha256"]:
+            self.errors.append(f"La consigna liberada en {sha[:10]} no es la sellada (sha256 {digest[:12]}… ≠ "
+                               f"{str(bloque['sha256'])[:12]}…).")
+        posteriores = commits[commits.index(liberacion) + 1:]
+        if posteriores:
+            self.warnings.append(f"La consigna ({carpeta}/) se modificó después de liberarla: "
+                                 + ", ".join(c[0][:10] for c in posteriores[:5]) + ".")
+
+    def _hash_carpeta(self, commit: str, carpeta: str) -> str:
+        """El mismo hash que `uatu-admin consigna hash` y la extensión, sobre el árbol de `commit`."""
+        h = hashlib.sha256()
+        listado = self._git(["ls-tree", "-r", commit, "--", carpeta + "/"])
+        entradas = []
+        for linea in listado.splitlines():
+            meta, _, ruta = linea.partition("\t")
+            oid = meta.split()[2]
+            contenido = subprocess.run(["git", "-C", self.repo, "cat-file", "blob", oid], capture_output=True,
+                                       check=True).stdout
+            entradas.append((ruta[len(carpeta) + 1:], hashlib.sha256(contenido).hexdigest()))
+        for ruta, digest in sorted(entradas, key=lambda e: e[0].encode("utf-8")):
+            h.update(f"{ruta}\n{digest}\n".encode("utf-8"))
+        return h.hexdigest()
+
     def consolidate(self) -> Dict[str, List[Tuple[datetime, str, Dict[str, Any]]]]:
         """Línea de tiempo cronológica por usuario combinando todas sus sesiones."""
         timeline: Dict[str, List[Tuple[datetime, str, Dict[str, Any]]]] = {}
@@ -572,6 +636,7 @@ class UatuAuditor:
             batches = self.load_branch_batches(branch, ref)
             self.sessions[branch] = self.audit_session(branch, batches, ref)
         self.check_code_commits()
+        self.check_consigna()
 
     @property
     def status(self) -> str:

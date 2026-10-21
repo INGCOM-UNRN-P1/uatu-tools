@@ -17,6 +17,7 @@ Uso: uatu-admin [--keys-dir DIR] <comando> [opciones]
   sign-config       Firma .uatu.conf con la clave Ed25519 docente.
   verify-config     Verifica la firma docente de .uatu.conf.
   protect-branches  Protege las ramas de telemetría contra borrado y force-push.
+  consigna          Sella la consigna del examen y la libera en start_utc (hora de GitHub).
 
 Las claves se guardan por omisión en ~/.config/uatu/keys/<id>/ (ver
 uatu_tools.keystore). Todas las firmas se calculan sobre la serialización
@@ -42,6 +43,7 @@ from uatu_tools.github import (
     resolve_token,
     set_actions_value,
 )
+from uatu_tools.consigna import ConsignaAntesDeHora, ConsignaError
 from uatu_tools.keystore import KeyStore, KeyStoreError, StoredKey, load_private
 
 AUDIT_PUBLIC_SECRET = "UATU_TEACHER_PUBLIC_KEY"
@@ -393,6 +395,88 @@ def cmd_protect_branches(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- consigna
+
+
+def _escribir_privado(ruta: str, texto: str) -> None:
+    fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(texto)
+    os.chmod(ruta, 0o600)
+
+
+def cmd_consigna_sellar(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna
+
+    archivos = consigna.leer_carpeta(args.carpeta)
+    paquete, clave = consigna.sellar(archivos)
+    salida = args.salida
+    clave_salida = args.clave_salida or salida + ".clave"
+    _save_json(salida, paquete)
+    _escribir_privado(clave_salida, consigna.codificar_clave(clave) + "\n")
+    config = _load_json(args.config)
+    config["consigna"] = {"carpeta": args.carpeta_destino, "sha256": paquete["sha256"]}
+    firmado = False
+    if args.key_id:
+        config = sign_config(config, load_private(_store(args).get(args.key_id).signing_key_path), args.key_id)
+        firmado = True
+    _save_json(args.config, config)
+    print(f"Consigna sellada: {len(archivos)} archivo(s), sha256 {paquete['sha256']}.")
+    print(f"  Paquete: {salida}\n  Clave:   {clave_salida} (0600: guardala fuera de los repositorios)")
+    print(f"  {args.config}: bloque consigna agregado" + (" y firmado." if firmado else
+          "; volvé a firmarlo (uatu-admin sign-config) antes de publicar la plantilla."))
+    return 0
+
+
+def cmd_consigna_liberar(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna
+
+    if bool(args.repo) == bool(args.org):
+        raise AdminError("Indique --repo OWNER/REPO (repetible) u --org ORG con --prefijo.")
+    if args.org and not args.prefijo:
+        raise AdminError("Con --org indique --prefijo (el de los repositorios del examen en Classroom).")
+    config = _load_json(args.config)
+    bloque = consigna.bloque_consigna(config)
+    if bloque is None:
+        raise AdminError(f"{args.config} no tiene el bloque consigna: sellala antes (uatu-admin consigna sellar).")
+    with open(args.clave, "r", encoding="utf-8") as f:
+        clave = consigna.decodificar_clave(f.read())
+    paquete = _load_json(args.paquete)
+    client = GitHubClient(resolve_token())
+    reloj = (lambda: consigna.fecha_de_github(client.api_url)) if not args.ahora else (
+        lambda: datetime.strptime(args.ahora, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc))
+    ahora = consigna.esperar_inicio(config, reloj, args.esperar)
+    # Recién ahora, con la hora del servidor después de start_utc, se descifra (en memoria).
+    archivos = consigna.abrir(paquete, clave, bloque["sha256"])
+    repos = list(args.repo or []) or consigna.repos_de_la_organizacion(client, args.org, args.prefijo)
+    if not repos:
+        raise AdminError(f"No hay repositorios de {args.org} que empiecen con '{args.prefijo}'.")
+    resultados = [consigna.publicar(client, r, archivos, bloque["carpeta"], bloque["sha256"], args.rama) for r in repos]
+    for r in resultados:
+        marca = {"liberada": "✓", "ya_estaba": "=", "error": "✗"}[r.estado]
+        print(f"{marca} {r.repo}: {r.estado}" + (f" ({r.detalle})" if r.detalle else ""))
+    errores = [r for r in resultados if r.estado == "error"]
+    print(f"Liberada a las {ahora:%H:%M:%S}Z (hora de GitHub) en {sum(r.estado == 'liberada' for r in resultados)} "
+          f"repositorio(s); {len(errores)} con error" + (": volvé a correr el comando para reintentarlos." if errores else "."))
+    return 1 if errores else 0
+
+
+def cmd_consigna_hash(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna
+
+    digest = consigna.hash_archivos(consigna.leer_carpeta(args.carpeta))
+    print(digest)
+    if args.config:
+        bloque = consigna.bloque_consigna(_load_json(args.config))
+        if bloque is None:
+            raise AdminError(f"{args.config} no declara consigna.")
+        if bloque["sha256"] != digest:
+            print(f"No coincide con el sha256 de {args.config} ({bloque['sha256']}).", file=sys.stderr)
+            return 1
+        print(f"Coincide con {args.config}.")
+    return 0
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -554,6 +638,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", default=RULESET_NAME, help="Nombre del ruleset (se actualiza si ya existe)")
     p.add_argument("--dry-run", action="store_true", help="Mostrar el ruleset sin aplicarlo")
     p.set_defaults(func=cmd_protect_branches)
+
+    consigna = sub.add_parser("consigna", help="Sella la consigna del examen y la libera en start_utc (hora de GitHub)")
+    csub = consigna.add_subparsers(dest="consigna_command", required=True)
+
+    p = csub.add_parser("sellar", help="Cifra la carpeta de la consigna y agrega su hash a .uatu.conf")
+    p.add_argument("carpeta", help="Carpeta con el enunciado y las pruebas base")
+    p.add_argument("--config", default=".uatu.conf")
+    p.add_argument("--salida", default="consigna.enc", help="Paquete cifrado (por omisión consigna.enc)")
+    p.add_argument("--clave-salida", help="Archivo 0600 para la clave (por omisión <salida>.clave)")
+    p.add_argument("--carpeta-destino", default="consigna", help="Carpeta donde aparece en el repositorio del examen")
+    p.add_argument("--key-id", help="Firmar .uatu.conf con esta clave docente del almacén")
+    p.set_defaults(func=cmd_consigna_sellar)
+
+    p = csub.add_parser("liberar", help="Descifra en memoria y publica la consigna en cada repositorio, desde start_utc")
+    objetivo = p.add_mutually_exclusive_group()
+    objetivo.add_argument("--repo", action="append", help="Repositorio OWNER/REPO (repetible)")
+    objetivo.add_argument("--org", help="Organización de los repositorios del examen")
+    p.add_argument("--prefijo", help="Con --org: prefijo de los repositorios (el de la tarea de Classroom)")
+    p.add_argument("--config", default=".uatu.conf")
+    p.add_argument("--paquete", default="consigna.enc")
+    p.add_argument("--clave", default="consigna.enc.clave", help="Archivo con la clave de la consigna")
+    p.add_argument("--rama", help="Rama donde publicarla (por omisión la principal de cada repositorio)")
+    p.add_argument("--esperar", action="store_true", help="Si todavía no es start_utc, esperar y liberarla a la hora")
+    p.add_argument("--ahora", help=argparse.SUPPRESS)  # pruebas: reemplaza la hora de GitHub
+    p.set_defaults(func=cmd_consigna_liberar)
+
+    p = csub.add_parser("hash", help="Hash de una carpeta (el que va en consigna.sha256) y si coincide con .uatu.conf")
+    p.add_argument("carpeta")
+    p.add_argument("--config", help="Comparar con el consigna.sha256 de este manifiesto")
+    p.set_defaults(func=cmd_consigna_hash)
     return parser
 
 
@@ -561,7 +675,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     try:
         return args.func(args)
-    except (AdminError, KeyStoreError, GitHubError, FileNotFoundError) as e:
+    except ConsignaAntesDeHora as e:
+        print(f"uatu-admin: {e}", file=sys.stderr)
+        return 3
+    except (AdminError, KeyStoreError, GitHubError, ConsignaError, FileNotFoundError) as e:
         print(f"uatu-admin: {e}", file=sys.stderr)
         return 1
 
