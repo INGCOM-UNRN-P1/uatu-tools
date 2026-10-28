@@ -182,9 +182,7 @@ uv run pytest -q
 | `uatu-admin sign-config` | Firma .uatu.conf |
 | `uatu-admin verify-config` | Verifica la firma de .uatu.conf |
 | `uatu-admin protect-branches` | Impide borrar o reescribir las ramas de telemetría (ruleset de GitHub) |
-| `uatu-admin consigna sellar` | Cifra la consigna y agrega su hash al `.uatu.conf` |
-| `uatu-admin consigna liberar` | Desde `start_utc` (hora de GitHub) la descifra en memoria y la publica en cada repositorio |
-| `uatu-admin consigna hash` | Hash de una carpeta y si coincide con el `consigna.sha256` del manifiesto |
+| `uatu-admin consigna` | Sella la consigna del examen y la libera en start_utc (hora de GitHub) |
 
 Ayuda de cada comando: `uatu-admin <comando> -h`.
 
