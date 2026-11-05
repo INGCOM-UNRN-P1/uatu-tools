@@ -466,6 +466,11 @@ class UatuAuditor:
                 if data.get("coincide") is False:
                     warn(f"La consigna que tenía el estudiante en seq {seq} no coincide con la sellada "
                          f"(sha256 {str(data.get('sha256_obtenido'))[:12]}…).")
+            elif etype == "paquete_rechazado":
+                warn(f"La extensión no abrió el paquete en seq {seq}: {data.get('motivo')}.")
+            elif etype == "paquete_abierto":
+                if data.get("clock_source") != "http-date":
+                    warn(f"El paquete se abrió en seq {seq} sin reloj calibrado contra el servidor.")
             elif etype == "clock_skew":
                 warn(f"Desfase de reloj registrado en seq {seq}: {data.get('offset_ms')} ms.")
             elif etype == "config_changed":
@@ -595,6 +600,52 @@ class UatuAuditor:
             self.warnings.append(f"La consigna ({carpeta}/) se modificó después de liberarla: "
                                  + ", ".join(c[0][:10] for c in posteriores[:5]) + ".")
 
+    def check_paquetes(self) -> None:
+        """El paquete del estudiante (bloque `paquetes` del manifiesto firmado): es el sellado para
+        el usuario de las sesiones, y la clave llegó con el commit de liberación después de
+        start_utc y lo abre (ver uatu_tools.paquetes)."""
+        from uatu_tools import consigna, paquetes
+
+        bloque = paquetes.bloque_paquetes(self.config)
+        if bloque is None:
+            return
+        try:
+            paquete = json.loads(self._git(["show", f"{self.code_ref}:{paquetes.ARCHIVO_PAQUETE}"]))
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            self.warnings.append("El paquete sellado no se distribuyó en este repositorio.")
+            return
+        usuario = str(paquete.get("usuario", ""))
+        if bloque["hashes"].get(usuario) != paquete.get("sha256"):
+            self.errors.append(f"El paquete de este repositorio ({usuario}) no es el sellado en .uatu.conf.")
+            return
+        for ajeno in sorted({r.github_user for r in self.sessions.values() if r.github_user.lower() != usuario}):
+            self.errors.append(f"El paquete es de {usuario}, pero hay sesiones de @{ajeno} en este repositorio.")
+        try:
+            log = self._git(["log", "--reverse", "--format=%H%x09%cI%x09%s", self.code_ref, "--", paquetes.ARCHIVO_CLAVE])
+        except subprocess.CalledProcessError:
+            return
+        commits = [linea.split("\t", 2) for linea in log.splitlines() if linea.count("\t") >= 2]
+        if not commits:
+            self.warnings.append(f"La clave del paquete de {usuario} no se liberó en este repositorio.")
+            return
+        sha, fecha, asunto = commits[0]
+        if not asunto.startswith(paquetes.MENSAJE_LIBERACION):
+            self.errors.append(f"La clave del paquete entró en el commit {sha[:10]} y no por la liberación de "
+                               "uatu-admin: pudo estar disponible antes de hora.")
+        start_dt, _ = self._window()
+        try:
+            liberada = parse_utc(fecha)
+        except ValueError:
+            liberada = None
+        if start_dt and liberada and liberada < start_dt:
+            self.errors.append(f"La clave del paquete se liberó antes de start_utc ({fecha} < "
+                               f"{self._session_cfg.get('start_utc')}).")
+        try:
+            clave = consigna.decodificar_clave(self._git(["show", f"{sha}:{paquetes.ARCHIVO_CLAVE}"]))
+            paquetes.abrir(paquete, clave, bloque["hashes"][usuario])
+        except (subprocess.CalledProcessError, consigna.ConsignaError) as e:
+            self.errors.append(f"La clave liberada en {sha[:10]} no abre el paquete: {e}")
+
     def _hash_carpeta(self, commit: str, carpeta: str) -> str:
         """El mismo hash que `uatu-admin consigna hash` y la extensión, sobre el árbol de `commit`."""
         h = hashlib.sha256()
@@ -637,6 +688,7 @@ class UatuAuditor:
             self.sessions[branch] = self.audit_session(branch, batches, ref)
         self.check_code_commits()
         self.check_consigna()
+        self.check_paquetes()
 
     @property
     def status(self) -> str:

@@ -274,6 +274,20 @@ ordenadas por ruta; la extensión y `uatu-audit` lo calculan igual. `uatu-audit`
 verifica que el commit de liberación sea posterior a `start_utc`, que el
 contenido sea el sellado y que la consigna no haya entrado por otro commit.
 
+### 3.16 `paquetes`
+
+Un paquete cifrado por estudiante (Ola 47; diseño y límites en `uatu/docs/paquetes_de_examen.md`). Un
+examen usa `consigna` o `paquetes`, no los dos.
+
+| Comando | Qué hace |
+| :-- | :-- |
+| `paquetes sellar CARPETA [--config] [--salida paquetes.enc] [--claves paquetes.claves] [--carpeta-destino consigna] [--key-id]` | Cifra `CARPETA/<usuario>/` con una clave por estudiante y agrega `paquetes.hashes` a `.uatu.conf`. |
+| `paquetes distribuir (--repo R=USUARIO … \| --org ORG --prefijo P) [--paquetes] [--rama]` | Publica cada `.uatu-paquete.enc`. Con `--org`, sale con 1 si un estudiante no tiene repositorio. |
+| `paquetes liberar (--repo R=USUARIO … \| --org ORG --prefijo P) [--paquetes] [--claves] [--rama] [--esperar]` | Con la hora de GitHub después de `start_utc`, publica cada `.uatu-paquete.clave`. Antes sale con 3 sin leer las claves. |
+
+`uatu-audit` verifica que el paquete sea el sellado para el usuario de las sesiones y que la clave lo
+abra y haya llegado con el commit de liberación, después de `start_utc`.
+
 ---
 
 (manual-uatu-tools-audit)=

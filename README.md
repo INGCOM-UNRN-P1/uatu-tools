@@ -96,6 +96,10 @@ uatu-admin keys export prof-lead-2026 -f decryption-key --out docente.pem
    uatu-admin consigna liberar --org ORG --prefijo examen-parcial-1- --esperar
    ```
 
+   Si cada estudiante tiene su tema, se usa `uatu-admin paquetes` en lugar de `consigna`: el examen
+   cifrado se reparte antes y a la hora sólo viaja la clave. Ver
+   [`uatu/docs/paquetes_de_examen.md`](../uatu/docs/paquetes_de_examen.md).
+
 6. **Auditoría de una entrega** (con la clave en el almacén, `uatu-audit` la
    toma del `teacher_key_id` del manifiesto):
 
@@ -183,6 +187,7 @@ uv run pytest -q
 | `uatu-admin verify-config` | Verifica la firma de .uatu.conf |
 | `uatu-admin protect-branches` | Impide borrar o reescribir las ramas de telemetría (ruleset de GitHub) |
 | `uatu-admin consigna` | Sella la consigna del examen y la libera en start_utc (hora de GitHub) |
+| `uatu-admin paquetes` | Un paquete cifrado por estudiante, que su equipo descifra desde start_utc |
 
 Ayuda de cada comando: `uatu-admin <comando> -h`.
 

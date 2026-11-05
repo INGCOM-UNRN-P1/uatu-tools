@@ -188,6 +188,13 @@ def repos_de_la_organizacion(cliente: Any, org: str, prefijo: str) -> List[str]:
 def publicar(cliente: Any, repo: str, archivos: Dict[str, bytes], carpeta: str, digest: str,
              rama: Optional[str] = None) -> Publicacion:
     """Un commit en `rama` (la principal, por omisión) que agrega `carpeta/` (idempotente)."""
+    return publicar_en_raiz(cliente, repo, {f"{carpeta}/{ruta}": c for ruta, c in archivos.items()}, carpeta,
+                            f"{MENSAJE_LIBERACION} ({digest[:12]})", rama)
+
+
+def publicar_en_raiz(cliente: Any, repo: str, archivos: Dict[str, bytes], raiz: str, mensaje: str,
+                     rama: Optional[str] = None) -> Publicacion:
+    """Un commit con `archivos` (rutas desde la raíz del repositorio); si `raiz` ya está, no hace nada."""
     from uatu_tools.github import GitHubError
 
     try:
@@ -196,19 +203,18 @@ def publicar(cliente: Any, repo: str, archivos: Dict[str, bytes], carpeta: str, 
         padre = ref["object"]["sha"]
         commit_padre = cliente.request("GET", f"/repos/{repo}/git/commits/{padre}")
         arbol_padre = cliente.request("GET", f"/repos/{repo}/git/trees/{commit_padre['tree']['sha']}")
-        if any(e.get("path") == carpeta for e in arbol_padre.get("tree", [])):
-            return Publicacion(repo, "ya_estaba", f"{carpeta}/ ya existe en {rama}")
+        if any(e.get("path") == raiz for e in arbol_padre.get("tree", [])):
+            return Publicacion(repo, "ya_estaba", f"{raiz} ya existe en {rama}")
         entradas = []
         for ruta, contenido in sorted(archivos.items()):
             blob = cliente.request("POST", f"/repos/{repo}/git/blobs",
                                    {"content": base64.b64encode(contenido).decode(), "encoding": "base64"})
-            entradas.append({"path": f"{carpeta}/{ruta}", "mode": "100644", "type": "blob", "sha": blob["sha"]})
+            entradas.append({"path": ruta, "mode": "100644", "type": "blob", "sha": blob["sha"]})
         arbol = cliente.request("POST", f"/repos/{repo}/git/trees",
                                 {"base_tree": commit_padre["tree"]["sha"], "tree": entradas})
         # Sin author/committer: GitHub usa la cuenta del token y la hora del servidor.
         commit = cliente.request("POST", f"/repos/{repo}/git/commits",
-                                 {"message": f"{MENSAJE_LIBERACION} ({digest[:12]})", "tree": arbol["sha"],
-                                  "parents": [padre]})
+                                 {"message": mensaje, "tree": arbol["sha"], "parents": [padre]})
         cliente.request("PATCH", f"/repos/{repo}/git/refs/heads/{rama}", {"sha": commit["sha"], "force": False})
         return Publicacion(repo, "liberada", commit["sha"])
     except (GitHubError, KeyError, TypeError) as e:

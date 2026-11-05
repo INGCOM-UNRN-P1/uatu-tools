@@ -18,6 +18,7 @@ Uso: uatu-admin [--keys-dir DIR] <comando> [opciones]
   verify-config     Verifica la firma docente de .uatu.conf.
   protect-branches  Protege las ramas de telemetría contra borrado y force-push.
   consigna          Sella la consigna del examen y la libera en start_utc (hora de GitHub).
+  paquetes          Un paquete cifrado por estudiante, que su equipo descifra desde start_utc.
 
 Las claves se guardan por omisión en ~/.config/uatu/keys/<id>/ (ver
 uatu_tools.keystore). Todas las firmas se calculan sobre la serialización
@@ -31,7 +32,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from uatu_tools.audit import canonical, traducir_argparse, verify_ed25519, without
 from uatu_tools.github import (
@@ -477,6 +478,142 @@ def cmd_consigna_hash(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- paquetes
+
+
+def cmd_paquetes_sellar(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna, paquetes
+
+    config = _load_json(args.config)
+    if consigna.bloque_consigna(config):
+        raise AdminError(f"{args.config} ya tiene el bloque consigna: un examen usa consigna o paquetes, no los dos.")
+    carpetas = paquetes.leer_paquetes(args.carpeta)
+    os.makedirs(args.salida, exist_ok=True)
+    claves: Dict[str, str] = {}
+    hashes: Dict[str, str] = {}
+    for usuario, archivos in carpetas.items():
+        paquete, clave = paquetes.sellar(usuario, archivos)
+        _save_json(os.path.join(args.salida, f"{usuario}.json"), paquete)
+        claves[usuario] = consigna.codificar_clave(clave)
+        hashes[usuario] = paquete["sha256"]
+    _escribir_privado(args.claves, json.dumps(claves, indent=2, sort_keys=True) + "\n")
+    config["paquetes"] = {"carpeta": args.carpeta_destino, "hashes": hashes}
+    firmado = False
+    if args.key_id:
+        config = sign_config(config, load_private(_store(args).get(args.key_id).signing_key_path), args.key_id)
+        firmado = True
+    _save_json(args.config, config)
+    print(f"Paquetes sellados: {len(carpetas)} estudiante(s).")
+    print(f"  Paquetes: {args.salida}/\n  Claves:   {args.claves} (0600: guardalas fuera de los repositorios)")
+    print(f"  {args.config}: bloque paquetes agregado" + (" y firmado." if firmado else
+          "; volvé a firmarlo (uatu-admin sign-config) antes de publicar la plantilla."))
+    return 0
+
+
+def _repos_de_paquetes(args: argparse.Namespace, client: GitHubClient, usuarios: List[str]) -> Dict[str, str]:
+    """{usuario: repositorio}; avisa los usuarios sin repositorio y los repositorios sin paquete."""
+    from uatu_tools import consigna, paquetes
+
+    if bool(args.repo) == bool(args.org):
+        raise AdminError("Indique --repo OWNER/REPO=USUARIO (repetible) u --org ORG con --prefijo.")
+    if args.org and not args.prefijo:
+        raise AdminError("Con --org indique --prefijo (el de los repositorios del examen en Classroom).")
+    if args.repo:
+        asignados: Dict[str, str] = {}
+        for entrada in args.repo:
+            repo, separador, usuario = entrada.partition("=")
+            if not separador:
+                raise AdminError(f"--repo {entrada}: falta el usuario (OWNER/REPO=USUARIO).")
+            asignados[paquetes.normalizar_usuario(usuario)] = repo
+        sobrantes = [u for u in asignados if u not in usuarios]
+        if sobrantes:
+            raise AdminError(f"Sin paquete sellado: {', '.join(sobrantes)}.")
+        return asignados
+    asignados, sin_usuario = paquetes.asignar_repos(consigna.repos_de_la_organizacion(client, args.org, args.prefijo),
+                                                    args.prefijo, usuarios)
+    for repo in sin_usuario:
+        print(f"! {repo}: no corresponde a ningún paquete sellado.", file=sys.stderr)
+    for usuario in usuarios:
+        if usuario not in asignados:
+            print(f"! {usuario}: no tiene repositorio con el prefijo {args.prefijo}.", file=sys.stderr)
+    return asignados
+
+
+def _bloque_paquetes(args: argparse.Namespace) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    from uatu_tools import paquetes
+
+    config = _load_json(args.config)
+    bloque = paquetes.bloque_paquetes(config)
+    if bloque is None:
+        raise AdminError(f"{args.config} no tiene el bloque paquetes: sellalos antes (uatu-admin paquetes sellar).")
+    return config, bloque
+
+
+def _texto_paquete(args: argparse.Namespace, usuario: str) -> Tuple[Dict[str, Any], bytes]:
+    paquete = _load_json(os.path.join(args.paquetes, f"{usuario}.json"))
+    return paquete, (json.dumps(paquete, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _informar_publicaciones(resultados: List[Any], verbo: str) -> int:
+    for r in resultados:
+        marca = {"liberada": "✓", "ya_estaba": "=", "error": "✗"}[r.estado]
+        print(f"{marca} {r.repo}: {r.estado}" + (f" ({r.detalle})" if r.detalle else ""))
+    errores = sum(r.estado == "error" for r in resultados)
+    print(f"{verbo} en {sum(r.estado == 'liberada' for r in resultados)} repositorio(s); {errores} con error"
+          + (": volvé a correr el comando para reintentarlos." if errores else "."))
+    return 1 if errores else 0
+
+
+def cmd_paquetes_distribuir(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna, paquetes
+
+    _, bloque = _bloque_paquetes(args)
+    client = GitHubClient(resolve_token())
+    asignados = _repos_de_paquetes(args, client, sorted(bloque["hashes"]))
+    resultados = []
+    for usuario, repo in sorted(asignados.items()):
+        paquete, texto = _texto_paquete(args, usuario)
+        if paquete.get("sha256") != bloque["hashes"][usuario]:
+            raise AdminError(f"El paquete de {usuario} no es el declarado en {args.config}: volvé a sellar.")
+        resultados.append(consigna.publicar_en_raiz(
+            client, repo, {paquetes.ARCHIVO_PAQUETE: texto}, paquetes.ARCHIVO_PAQUETE,
+            f"{paquetes.MENSAJE_DISTRIBUCION} ({paquete['sha256'][:12]})", args.rama))
+    codigo = _informar_publicaciones(resultados, "Paquetes distribuidos")
+    # Con --repo se eligió una parte; con --org, un estudiante sin repositorio se queda sin examen.
+    return codigo or (1 if args.org and len(asignados) < len(bloque["hashes"]) else 0)
+
+
+def cmd_paquetes_liberar(args: argparse.Namespace) -> int:
+    from uatu_tools import consigna, paquetes
+
+    config, bloque = _bloque_paquetes(args)
+    client = GitHubClient(resolve_token())
+    asignados = _repos_de_paquetes(args, client, sorted(bloque["hashes"]))
+    reloj = (lambda: consigna.fecha_de_github(client.api_url)) if not args.ahora else (
+        lambda: datetime.strptime(args.ahora, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc))
+    ahora = consigna.esperar_inicio(config, reloj, args.esperar)
+    # Recién ahora, con la hora del servidor después de start_utc, se leen las claves.
+    with open(args.claves, "r", encoding="utf-8") as f:
+        claves = json.load(f)
+    resultados = []
+    for usuario, repo in sorted(asignados.items()):
+        paquete, texto = _texto_paquete(args, usuario)
+        clave = consigna.decodificar_clave(claves[usuario])
+        paquetes.abrir(paquete, clave, bloque["hashes"][usuario])  # una clave que no abre no se publica
+        # Si un repositorio se creó después de distribuir, el paquete llega ahora.
+        previa = consigna.publicar_en_raiz(client, repo, {paquetes.ARCHIVO_PAQUETE: texto}, paquetes.ARCHIVO_PAQUETE,
+                                           f"{paquetes.MENSAJE_DISTRIBUCION} ({paquete['sha256'][:12]})", args.rama)
+        if previa.estado == "error":
+            resultados.append(previa)
+            continue
+        resultados.append(consigna.publicar_en_raiz(
+            client, repo, {paquetes.ARCHIVO_CLAVE: (claves[usuario] + "\n").encode("ascii")}, paquetes.ARCHIVO_CLAVE,
+            f"{paquetes.MENSAJE_LIBERACION} ({paquete['sha256'][:12]})", args.rama))
+    codigo = _informar_publicaciones(resultados, f"Claves liberadas a las {ahora:%H:%M:%S}Z (hora de GitHub)")
+    # Con --repo se eligió una parte; con --org, un estudiante sin repositorio se queda sin examen.
+    return codigo or (1 if args.org and len(asignados) < len(bloque["hashes"]) else 0)
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -668,6 +805,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("carpeta")
     p.add_argument("--config", help="Comparar con el consigna.sha256 de este manifiesto")
     p.set_defaults(func=cmd_consigna_hash)
+
+    paquetes = sub.add_parser("paquetes", help="Un paquete cifrado por estudiante, que su equipo descifra desde start_utc")
+    psub = paquetes.add_subparsers(dest="paquetes_command", required=True)
+
+    p = psub.add_parser("sellar", help="Cifra <carpeta>/<usuario>/ con una clave por estudiante y agrega los hashes a .uatu.conf")
+    p.add_argument("carpeta", help="Carpeta con una subcarpeta por usuario de GitHub (la arma alucard repartir)")
+    p.add_argument("--config", default=".uatu.conf")
+    p.add_argument("--salida", default="paquetes.enc", help="Carpeta de los paquetes cifrados (por omisión paquetes.enc)")
+    p.add_argument("--claves", default="paquetes.claves", help="Archivo de claves, 0600 (por omisión paquetes.claves)")
+    p.add_argument("--carpeta-destino", default="consigna", help="Carpeta donde se descifra en el repositorio del examen")
+    p.add_argument("--key-id", help="Firmar .uatu.conf con esta clave del almacén")
+    p.set_defaults(func=cmd_paquetes_sellar)
+
+    for nombre, ayuda, funcion in (
+        ("distribuir", "Publica cada paquete cifrado en el repositorio de su dueño, antes del examen", cmd_paquetes_distribuir),
+        ("liberar", "Publica la clave de cada estudiante en su repositorio, desde start_utc (hora de GitHub)", cmd_paquetes_liberar),
+    ):
+        p = psub.add_parser(nombre, help=ayuda)
+        p.add_argument("--config", default=".uatu.conf")
+        p.add_argument("--paquetes", default="paquetes.enc", help="Carpeta de los paquetes cifrados")
+        p.add_argument("--repo", action="append", metavar="OWNER/REPO=USUARIO", help="Repositorio de un estudiante (repetible)")
+        p.add_argument("--org", help="Organización de los repositorios del examen")
+        p.add_argument("--prefijo", help="Prefijo de los repositorios: <prefijo>-<usuario>")
+        p.add_argument("--rama", help="Rama (por omisión, la principal de cada repositorio)")
+        if nombre == "liberar":
+            p.add_argument("--claves", default="paquetes.claves", help="Archivo de claves")
+            p.add_argument("--esperar", action="store_true", help="Esperar a start_utc en lugar de fallar")
+            p.add_argument("--ahora", help=argparse.SUPPRESS)
+        p.set_defaults(func=funcion)
     return parser
 
 
